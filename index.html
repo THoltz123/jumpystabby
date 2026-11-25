@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Candy Quest</title>
+<style>
+:root{--bg:#2a4d8f;--ink:#fff8e7;--panel:#9fe0ff;color-scheme:dark;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:light){:root{--bg:#ffd9ec;--ink:#3a2350;--panel:#bfeaff;color-scheme:light}}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font-family:"Trebuchet MS",Verdana,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+canvas{width:min(96vw,820px);aspect-ratio:2/1;background:var(--panel);border-radius:6px;touch-action:none}
+p{margin:0;font-size:14px;opacity:.9;text-align:center;padding:0 12px;max-width:800px}
+.pad{display:none;gap:10px}
+.pad button{width:58px;height:52px;font-size:20px;border:2px solid var(--ink);background:transparent;color:var(--ink);border-radius:8px}
+@media (pointer:coarse){.pad{display:flex}}
+</style>
+</head>
+<body>
+<canvas id="c" width="800" height="400" aria-label="Candy Quest platformer"></canvas>
+<p>Arrows/A-D move, Space/W jump, X sword, C blaster. Stomp enemies, dodge spikes, collect every gem, then enter the gate. Each level is harder.</p>
+<div class="pad"><button id="L">◀</button><button id="J">▲</button><button id="R">▶</button><button id="X">⚔</button><button id="C">✦</button></div>
+<script>
+const cv=document.getElementById('c'),g=cv.getContext('2d');
+const H=400,R=Math.random,rr=(a,b)=>a+R()*(b-a);
+const hit=(a,b)=>a.x<b[0]+b[2]&&a.x+a.w>b[0]&&a.y<b[1]+b[3]&&a.y+a.h>b[1];
+const NAMES={gem:'Candy gem!',sword:'Sword! Press X to slash',blaster:'+8 blaster ammo (C)',heal:'+1 heart',heart:'Max hearts up!',boots:'Higher jumps!',power:'More damage!',speed:'Faster!'};
+let W,plats,spikes,fires,enemies,items,shots,slash,gate,p,up,keys={},cam=0,lvl=1,state='play',timer=0,msg={t:'',life:0};
+const got=()=>items.filter(i=>i.type==='gem'&&i.got).length,need=()=>items.filter(i=>i.type==='gem').length;
+function newGame(){lvl=1;up={maxhp:3,jump:11.5,spd:4,pow:1};p={x:40,y:300,w:22,h:30,vx:0,vy:0,on:false,f:1,hp:3,inv:0,sword:false,ammo:0,cd:0,sx:40,sy:300};build();state='play'}
+function build(){
+ plats=[];spikes=[];fires=[];enemies=[];items=[];shots=[];slash=null;
+ const N=Math.min(5+lvl,13),tier=Math.floor((lvl-1)/10);let x=0;
+ if(lvl%10===1&&lvl>1)say(lvl===11?'Fire pits ahead!':lvl===21?'Sawblades ahead!':'Hotter hazards ahead!');
+ for(let i=0;i<N;i++){
+  const last=i===N-1,w=i?rr(250,380):320;
+  plats.push([x,360,w,40]);
+  if(i&&!last){
+   if(R()<Math.min(.3+lvl*.07,.85)){const c=1+(R()*Math.min(3,1+lvl/3)|0),sx=x+rr(80,w-80-c*20);for(let k=0;k<c;k++)spikes.push([sx+k*20,348,20,12])}
+   const ec=(R()<Math.min(.35+lvl*.08,.9)?1:0)+(lvl>=4&&R()<.4?1:0);
+   for(let k=0;k<ec;k++)enemies.push({x:x+rr(60,w-80),y:338,w:22,h:22,x0:x+10,x1:x+w-32,d:R()<.5?-1:1,hp:1+(lvl/4|0),hop:lvl>=3&&R()<.4,vy:0,t:rr(0,80)|0,sp:Math.min(.8+lvl*.12,2.2),fl:0});
+   if(tier>=1&&R()<Math.min(.3+tier*.2,.85)){for(let a=0;a<6;a++){const fx=x+rr(60,w-100);if(!spikes.some(s=>Math.abs(s[0]-fx)<60)&&!fires.some(f=>Math.abs(f.x-fx)<80)){fires.push({x:fx,w:34,t:rr(0,150)|0});break}}}
+   if(tier>=2&&R()<Math.min(.2+tier*.12,.6))enemies.push({x:x+rr(60,w-80),y:338,w:22,h:22,x0:x+10,x1:x+w-32,d:1,hp:99,saw:true,vy:0,t:0,sp:Math.min(1.1+tier*.2,2.4),fl:0});
+  }
+  if(i){
+   const px=x+w/2-50;plats.push([px,270,100,16]);
+   const ne=Math.min(Math.ceil(lvl/2),4);
+   for(let k=0;k<ne;k++){const ey=[310,235,195][R()*3|0],ex=x+rr(20,w-100);plats.push([ex,ey,rr(70,110)|0,16]);if(ey<260&&R()<.3)items.push({x:ex+40,y:ey-20,type:R()<.5?'blaster':'heal',got:false})}
+   if(lvl>=2&&R()<Math.min(.2+lvl*.05,.8)){const hz=R()<.5,q=[x+w/2-45,hz?300:285,90,16];q.m={h:hz,c:hz?x+w/2-45:285,r:hz?rr(60,100):rr(45,60),a:rr(0,6),sp:Math.min(.018+lvl*.002,.05)};plats.push(q)}
+   const r=R();let ty;
+   if(lvl===1&&i===1)ty='sword';
+   else if(r<.55)ty='gem';
+   else if(r<.7)ty=(!p.sword&&R()<.5)?'sword':'blaster';
+   else if(r<.85)ty=['heart','boots','power','speed'][R()*4|0];
+   else ty='heal';
+   items.push({x:px+50,y:250,type:ty,got:false});
+  }
+  if(last){gate=[x+w-60,300,30,60];W=x+w+80}
+  x+=w+Math.min(rr(55,75)+lvl*7,135);
+ }
+ let gc=need();for(const it of items){if(gc>=3)break;if(it.type!=='gem'&&!(lvl===1&&it.type==='sword')){it.type='gem';gc++}}
+}
+function say(t){msg={t,life:110}}
+function take(t){
+ if(t==='sword')p.sword=true;else if(t==='blaster')p.ammo+=8;
+ else if(t==='heal')p.hp=Math.min(p.hp+1,up.maxhp);
+ else if(t==='heart'){up.maxhp++;p.hp++}
+ else if(t==='boots')up.jump=Math.min(up.jump+.7,14.5);
+ else if(t==='power')up.pow++;
+ else if(t==='speed')up.spd=Math.min(up.spd+.4,6);
+ say(NAMES[t]);
+}
+function hurt(n){if(p.inv>0||state!=='play')return;p.hp-=n;p.inv=90;p.vy=-6;if(p.hp<=0){p.hp=up.maxhp;p.x=p.sx;p.y=p.sy;p.vx=0;p.vy=0;p.inv=120;say('Back on your feet!')}}
+function dmg(e,n){if(e.saw)return;e.hp-=n;e.fl=8;if(e.hp<=0)e.dead=true}
+function sword(){if(state!=='play'||!p.sword||p.cd>0)return;p.cd=18;slash={t:8};const b={x:p.f>0?p.x+p.w:p.x-38,y:p.y-4,w:38,h:p.h+8};for(const e of enemies)if(!e.dead&&hit(b,[e.x,e.y,e.w,e.h]))dmg(e,up.pow+1)}
+function blast(){if(state!=='play'||p.ammo<1||p.cd>0)return;p.ammo--;p.cd=14;shots.push({x:p.x+p.w/2,y:p.y+14,vx:p.f*8,life:70})}
+addEventListener('keydown',e=>{const k=e.key.toLowerCase();keys[k]=true;if(k===' '||k.startsWith('arrow'))e.preventDefault();
+ if(k==='x')sword();if(k==='c')blast();if(k==='enter'&&state==='over')newGame()});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+[['L','arrowleft'],['R','arrowright'],['J',' ']].forEach(([id,k])=>{const b=document.getElementById(id);
+ b.addEventListener('pointerdown',e=>{e.preventDefault();keys[k]=true});
+ ['pointerup','pointerleave','pointercancel'].forEach(ev=>b.addEventListener(ev,()=>keys[k]=false))});
+document.getElementById('X').addEventListener('pointerdown',e=>{e.preventDefault();sword()});
+document.getElementById('C').addEventListener('pointerdown',e=>{e.preventDefault();blast()});
+cv.addEventListener('pointerdown',()=>{if(state==='over')newGame()});
+function upd(){
+ if(msg.life>0)msg.life--;
+ if(state==='clear'){if(--timer<=0){lvl++;Object.assign(p,{x:40,y:300,vx:0,vy:0,sx:40,sy:300,inv:60,ride:null});p.hp=Math.min(p.hp+1,up.maxhp);build();state='play'}return}
+ if(state!=='play')return;
+ for(const q of plats)if(q.m){const m=q.m;m.a+=m.sp;const v=Math.sin(m.a)*m.r,nx=m.h?m.c+v:q[0],ny=m.h?q[1]:m.c+v,dx=nx-q[0],dy=ny-q[1];if(p.ride===q){p.x+=dx;p.y+=dy}q[0]=nx;q[1]=ny}
+ const l=keys.arrowleft||keys.a,r=keys.arrowright||keys.d,j=keys[' ']||keys.w||keys.arrowup;
+ p.vx=((r?1:0)-(l?1:0))*up.spd;if(p.vx)p.f=p.vx>0?1:-1;
+ if(j&&p.on){p.vy=-up.jump;p.on=false}
+ if(p.inv>0)p.inv--;if(p.cd>0)p.cd--;
+ p.vy=Math.min(p.vy+.55,12);
+ p.x+=p.vx;for(const q of plats)if(q[3]>30&&hit(p,q))p.x=p.vx>0?q[0]-p.w:q[0]+q[2];
+ p.x=Math.max(0,Math.min(W-p.w,p.x));
+ const oy=p.y;p.y+=p.vy;p.on=false;p.ride=null;
+ for(const q of plats)if(hit(p,q)){
+  if(q[3]<30&&!(p.vy>0&&oy+p.h<=q[1]+1))continue;
+  if(p.vy>0){p.y=q[1]-p.h;p.on=true;p.ride=q}else p.y=q[1]+q[3];p.vy=0}
+ if(p.y>H+60){hurt(1);p.x=p.sx;p.y=p.sy;p.vy=0}
+ else if(p.on&&p.y>=330&&plats.some(q=>q[3]>30&&p.x>q[0]+25&&p.x+p.w<q[0]+q[2]-25)&&!spikes.some(s=>Math.abs(s[0]-p.x)<70)){p.sx=p.x;p.sy=p.y}
+ for(const s of spikes)if(hit(p,s))hurt(1);
+ for(const f of fires){f.t=(f.t+1)%150;if(f.t>=90&&f.t<140&&hit(p,[f.x,270,f.w,90]))hurt(1)}
+ for(const e of enemies){
+  if(e.dead)continue;
+  e.x+=e.d*e.sp;if(e.x<e.x0){e.x=e.x0;e.d=1}if(e.x>e.x1){e.x=e.x1;e.d=-1}
+  if(e.hop){e.t++;if(e.t>80&&e.y>=338){e.vy=-8;e.t=0}e.vy+=.5;e.y+=e.vy;if(e.y>=338){e.y=338;e.vy=0}}
+  if(e.fl>0)e.fl--;
+  if(hit(p,[e.x,e.y,e.w,e.h])){if(!e.saw&&p.vy>1&&p.y+p.h-e.y<16){dmg(e,up.pow);p.vy=-8}else hurt(1)}
+ }
+ for(const s of shots){s.x+=s.vx;s.life--;for(const e of enemies)if(!e.dead&&s.life>0&&hit({x:s.x-4,y:s.y-4,w:8,h:8},[e.x,e.y,e.w,e.h])){dmg(e,up.pow);s.life=0}}
+ shots=shots.filter(s=>s.life>0);
+ if(slash&&--slash.t<=0)slash=null;
+ for(const it of items)if(!it.got&&Math.abs(p.x+11-it.x)<22&&Math.abs(p.y+15-it.y)<26){it.got=true;take(it.type)}
+ if(got()===need()&&hit(p,gate)){state='clear';timer=140}
+ cam=Math.max(0,Math.min(W-800,p.x-360));
+}
+function drawItem(it){
+ const{x,y,type:t}=it;
+ if(t==='gem'){g.fillStyle='#fff8';g.beginPath();g.arc(x,y,15,0,7);g.fill();g.fillStyle='#ff6fa8';g.beginPath();g.moveTo(x,y-11);g.lineTo(x+9,y);g.lineTo(x,y+11);g.lineTo(x-9,y);g.fill()}
+ else if(t==='sword'){g.strokeStyle='#e8f1ff';g.lineWidth=4;g.beginPath();g.moveTo(x-9,y+9);g.lineTo(x+9,y-9);g.stroke();g.strokeStyle='#f2b134';g.beginPath();g.moveTo(x-9,y+3);g.lineTo(x-3,y+9);g.stroke()}
+ else if(t==='blaster'){g.fillStyle='#ff9f43';g.beginPath();g.arc(x,y,9,0,7);g.fill();g.fillStyle='#444';g.fillRect(x,y-3,12,6)}
+ else if(t==='heal'){g.fillStyle='#e63946';g.font='24px sans-serif';g.textAlign='center';g.fillText('♥',x,y+8)}
+ else{g.fillStyle='#ffd23f';g.beginPath();g.arc(x,y,12,0,7);g.fill();g.fillStyle='#2b1b4a';g.font='bold 15px sans-serif';g.textAlign='center';g.fillText({heart:'♥',boots:'↑',power:'!',speed:'»'}[t],x,y+5)}
+ g.textAlign='left';
+}
+function draw(){
+ g.clearRect(0,0,800,400);g.fillStyle='#fffb';
+ for(let i=0;i<6;i++){const x=((i*230-cam*.3)%900+900)%900-50;g.beginPath();g.ellipse(x,70+(i%3)*40,50,18,0,0,7);g.fill()}
+ g.save();g.translate(-cam,0);
+ for(const q of plats){const fl=q[3]<30;g.fillStyle=q.m?'#cdb4ff':fl?'#ffb3d9':'#a0623a';g.fillRect(q[0],q[1],q[2],q[3]);g.fillStyle=q.m?'#9b5de5':fl?'#ff6fa8':'#5fd068';g.fillRect(q[0],q[1],q[2],5)}
+ g.fillStyle='#b8c0cc';for(const s of spikes){g.beginPath();g.moveTo(s[0],360);g.lineTo(s[0]+10,348);g.lineTo(s[0]+20,360);g.fill()}
+ for(const f of fires){g.fillStyle='#3a1a12';g.fillRect(f.x,352,f.w,8);const h=f.t>=90&&f.t<140?90:f.t>=60&&f.t<90?20:0;if(h){g.fillStyle='#ff6a00';g.beginPath();g.roundRect(f.x+2,360-h,f.w-4,h,[12,12,0,0]);g.fill();g.fillStyle='#ffd23f';g.beginPath();g.roundRect(f.x+10,360-h*.6,f.w-20,h*.6,[8,8,0,0]);g.fill()}}
+ g.fillStyle=got()===need()?'#ff6fa8':'#6b6b6b';g.fillRect(gate[0],gate[1],gate[2],gate[3]);
+ for(const it of items)if(!it.got)drawItem(it);
+ for(const e of enemies)if(!e.dead&&e.saw){g.save();g.translate(e.x+11,e.y+11);g.rotate(performance.now()/90);g.fillStyle='#9aa4b2';g.beginPath();for(let a=0;a<8;a++){g.lineTo(Math.cos(a*.785)*13,Math.sin(a*.785)*13);g.lineTo(Math.cos(a*.785+.39)*8,Math.sin(a*.785+.39)*8)}g.fill();g.restore()}
+ for(const e of enemies)if(!e.dead&&!e.saw){g.fillStyle=e.fl?'#fff':(e.hop?'#ff9f43':'#5fd068');g.beginPath();g.roundRect(e.x,e.y,e.w,e.h,[11,11,4,4]);g.fill();if(e.hp>1){g.strokeStyle='#2b1b4a';g.lineWidth=3;g.stroke()}g.fillStyle='#222';g.fillRect(e.x+5,e.y+7,3,4);g.fillRect(e.x+14,e.y+7,3,4)}
+ g.fillStyle='#ff9f43';for(const s of shots){g.beginPath();g.arc(s.x,s.y,5,0,7);g.fill()}
+ if(!(p.inv>0&&(p.inv>>2)%2)){
+  g.fillStyle='#4d7cff';g.fillRect(p.x,p.y+8,p.w,p.h-8);g.fillStyle='#ffd7b0';g.fillRect(p.x+2,p.y,p.w-4,10);
+  g.fillStyle='#2f9e44';g.fillRect(p.x+(p.f<0?p.w-2:-5),p.y+10,7,14);g.fillStyle='#222';g.fillRect(p.x+(p.f<0?5:14),p.y+3,3,4)}
+ if(slash){g.fillStyle='#e8f1ff';g.fillRect(p.f>0?p.x+p.w:p.x-36,p.y+10,36,6)}
+ g.restore();
+ g.fillStyle='#e63946';g.font='bold 18px sans-serif';g.fillText('♥'.repeat(Math.max(0,p.hp))+'♡'.repeat(Math.max(0,up.maxhp-p.hp)),14,26);
+ g.fillStyle='#2b1b4a';g.font='bold 15px "Trebuchet MS",sans-serif';
+ g.fillText('Level '+lvl+'   Gems '+got()+' / '+need(),14,48);
+ g.fillText((p.sword?'Sword [X]  ':'')+(p.ammo?'Blaster '+p.ammo+' [C]  ':'')+'Power '+up.pow,14,68);
+ if(msg.life>0){g.textAlign='center';g.fillText(msg.t,400,28);g.textAlign='left'}
+ if(state!=='play'){g.fillStyle='#000a';g.fillRect(0,0,800,400);g.fillStyle='#fff8e7';g.textAlign='center';g.font='32px "Trebuchet MS",sans-serif';
+  g.fillText(state==='clear'?'Level '+lvl+' complete!':'Game over: reached level '+lvl,400,190);g.font='16px "Trebuchet MS",sans-serif';
+  g.fillText(state==='clear'?'Next up: more traps and tougher enemies':'Press Enter or tap to restart',400,225);g.textAlign='left'}
+}
+newGame();
+(function loop(){upd();draw();requestAnimationFrame(loop)})();
+</script>
+</body>
+</html>
